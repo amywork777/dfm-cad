@@ -1,0 +1,29 @@
+{
+  "name": "mounting-bracket",
+  "description": "L-shaped mounting bracket with 4 holes for M5 bolts",
+  "constraints": {
+    "material": "aluminum_6061",
+    "process": "cnc_milling",
+    "max_mass_kg": 0.2,
+    "min_wall_thickness_mm": 2.0,
+    "units": "mm"
+  },
+  "tasks": [
+    {
+      "id": "base",
+      "description": "Create L-shaped base profile, 50mm x 50mm x 40mm, 5mm thick walls",
+      "status": "pending"
+    },
+    {
+      "id": "holes",
+      "description": "Add 4 mounting holes for M5 bolts (5.5mm diameter), positioned 10mm from edges",
+      "status": "pending"
+    },
+    {
+      "id": "fillets",
+      "description": "Add 3mm fillets to inside corner and 1mm fillets to all external edges",
+      "status": "pending"
+    }
+  ],
+  "notes": []
+}
