@@ -12,17 +12,22 @@
     {
       "id": "base",
       "description": "Create L-shaped base profile, 50mm x 50mm x 40mm, 5mm thick walls",
-      "status": "pending"
+      "status": "passed",
+      "code": "import cadquery as cq\n\n# Dimensions for L-shaped base\nouter_length = 50\nouter_width = 50\nouter_height = 40\nwall_thickness = 5\n\n# Create the L-shaped profile by combining two rectangular sections\nresult = (\n    cq.Workplane(\"XY\")\n    # Create horizontal section\n    .box(outer_length, wall_thickness, outer_height)\n    .faces(\"<Y\")\n    .workplane()\n    # Add vertical section\n    .box(wall_thickness, outer_width, outer_height, centered=(False, False, True))\n)\n\n# Add fillets to all edges for better manufacturability with CNC milling\nresult = result.edges().fillet(1)\n\ncq.exporters.export(result, \"output.step\")"
     },
     {
       "id": "holes",
       "description": "Add 4 mounting holes for M5 bolts (5.5mm diameter), positioned 10mm from edges",
-      "status": "pending"
+      "status": "passed",
+      "code": "import cadquery as cq\n\n# Parameters\nbase_width = 60\nbase_height = 40\nbase_thickness = 5\nhole_diameter = 5.5  # For M5 bolts\nedge_distance = 10\nfillet_radius = 1\n\n# Calculate hole positions from center\nhole_x_offset = (base_width / 2) - edge_distance\nhole_y_offset = (base_height / 2) - edge_distance\n\nresult = (\n    cq.Workplane(\"XY\")\n    .box(base_width, base_height, base_thickness)\n    .faces(\">Z\")\n    .workplane()\n    .pushPoints([\n        (hole_x_offset, hole_y_offset),\n        (-hole_x_offset, hole_y_offset),\n        (-hole_x_offset, -hole_y_offset),\n        (hole_x_offset, -hole_y_offset)\n    ])\n    .hole(hole_diameter)\n    .faces(\">Z\")\n    .edges()\n    .fillet(fillet_radius)\n    .faces(\"<Z\")\n    .edges()\n    .fillet(fillet_radius)\n)\n\ncq.exporters.export(result, \"output.step\")"
     },
     {
       "id": "fillets",
       "description": "Add 3mm fillets to inside corner and 1mm fillets to all external edges",
-      "status": "pending"
+      "status": "passed",
+      "previous_code": "import cadquery as cq\n\n# Dimensions\nwidth = 40\nheight = 40\nthickness = 10\nwall_thickness = 3\ninner_width = width - 2 * wall_thickness\ninner_height = height - 2 * wall_thickness\n\n# Create main body - L-shaped bracket\nresult = (\n    cq.Workplane(\"XY\")\n    .box(width, height, thickness)\n    .faces(\">Z\")\n    .workplane()\n    .rect(inner_width, inner_height)\n    .cutThruAll()\n)\n\n# Add 3mm fillets to inside corners\nresult = result.edges(\"not |Z\").fillet(3)\n\n# Add 1mm fillets to all external edges\nresult = result.edges(\"|Z\").fillet(1)\nresult = result.edges(\">Z or <Z\").fillet(1)\n\ncq.exporters.export(result, \"output.step\")",
+      "previous_error": "StdFail_NotDone: BRep_API: command not done\nTraceback (most recent call last):\n  File \"/home/kit/dfm-cad-prototype/backend/agent/executor.py\", line 53, in execute_cadquery\n    exec(code, exec_globals)\n  File \"<string>\", line 22, in <module>\n  File \"/home/kit/dfm-cad-prototype/backend/venv/lib/python3.12/site-packages/cadquery/cq.py\", line 1243, in fillet\n    s = solid.fillet(radius, edgeList)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/kit/dfm-cad-prototype/backend/venv/lib/python3.12/site-packages/cadquery/occ_impl/shapes.py\", line 3732, in fillet\n    return self.__class__(fillet_builder.Shape())\n                          ^^^^^^^^^^^^^^^^^^^^^^\nOCP.OCP.StdFail.StdFail_NotDone: BRep_API: command not done\n",
+      "code": "import cadquery as cq\n\n# Dimensions\nwidth = 40\nheight = 40\nthickness = 10\nwall_thickness = 3\ninner_width = width - 2 * wall_thickness\ninner_height = height - 2 * wall_thickness\n\n# Create main body - hollow rectangular box\nresult = (\n    cq.Workplane(\"XY\")\n    .box(width, height, thickness)\n    .faces(\">Z\")\n    .workplane()\n    .rect(inner_width, inner_height)\n    .cutThruAll()\n)\n\n# Add 1mm fillets to all external edges first\nresult = result.edges(\"|Z\").fillet(1)\n\n# Add 3mm fillets to inside corners (edges where the cutout meets the walls)\n# Select edges at the inside corners where the rectangular cutout was made\nresult = (\n    result\n    .faces(\">Z\")\n    .workplane()\n    .rect(inner_width, inner_height)\n    .extrude(-thickness)\n    .edges(\"not |Z\")\n    .fillet(3)\n)\n\n# Create final part by subtracting the filleted cutout from the original\nouter_box = (\n    cq.Workplane(\"XY\")\n    .box(width, height, thickness)\n    .edges(\"|Z\")\n    .fillet(1)\n)\n\ninner_cutout = (\n    cq.Workplane(\"XY\")\n    .rect(inner_width, inner_height)\n    .extrude(thickness)\n    .edges(\"|Z\")\n    .fillet(3)\n)\n\nresult = outer_box.cut(inner_cutout)\n\ncq.exporters.export(result, \"output.step\")"
     }
   ],
   "notes": []

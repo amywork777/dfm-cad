@@ -9,82 +9,56 @@ Uses CadQuery/OpenCASCADE to analyze:
 - Overhang angles
 """
 
-from typing import Optional
 import math
 
 
 def analyze_geometry(step_path: str) -> dict:
     """
     Analyze a STEP file and extract DFM-relevant properties.
-    
-    Returns:
-        {
-            "volume_mm3": float,
-            "surface_area_mm2": float,
-            "bounding_box": {"x": float, "y": float, "z": float},
-            "num_faces": int,
-            "num_edges": int,
-            "min_wall_thickness_mm": float,
-            "holes": [{"diameter": float, "depth": float}],
-            "fillets": [{"radius": float}],
-            "sharp_edges": int,
-            "draft_angles": [float],  # degrees
-            "overhangs": [{"angle": float, "area_mm2": float}]
-        }
     """
     try:
         import cadquery as cq
-        from OCP.BRepGProp import BRepGProp
-        from OCP.GProp import GProp_GProps
-        from OCP.BRepBndLib import BRepBndLib_AddOBB
-        from OCP.Bnd import Bnd_OBB
         
         # Import the STEP file
-        result = cq.importers.importStep(step_path)
-        solid = result.val()
-        
-        # Basic properties
-        props = GProp_GProps()
-        BRepGProp.VolumeProperties_s(solid.wrapped, props)
-        volume = props.Mass()
-        
-        BRepGProp.SurfaceProperties_s(solid.wrapped, props)
-        surface_area = props.Mass()
+        wp = cq.importers.importStep(step_path)
+        solid = wp.solids().vals()[0]
         
         # Bounding box
-        bb = result.val().BoundingBox()
+        bb = solid.BoundingBox()
         bounding_box = {
             "x": bb.xlen,
             "y": bb.ylen,
             "z": bb.zlen
         }
         
+        # Volume and surface area using CadQuery methods
+        volume = solid.Volume()
+        
         # Count faces and edges
-        faces = result.faces().vals()
-        edges = result.edges().vals()
+        faces = wp.faces().vals()
+        edges = wp.edges().vals()
         
-        # Analyze faces for wall thickness (simplified)
-        # Real implementation would use ray casting or medial axis
-        min_wall = estimate_min_wall_thickness(result)
+        # Find holes (cylindrical faces)
+        holes = find_holes(wp)
         
-        # Find holes (cylindrical faces that are internal)
-        holes = find_holes(result)
+        # Find fillets
+        fillets = find_fillets(wp)
         
-        # Find fillets (faces with constant curvature)
-        fillets = find_fillets(result)
+        # Count sharp edges
+        sharp_edges = count_sharp_edges(wp)
         
-        # Count sharp edges (edges without fillets)
-        sharp_edges = count_sharp_edges(result)
+        # Analyze draft angles
+        draft_angles = analyze_draft_angles(wp)
         
-        # Analyze draft angles on vertical faces
-        draft_angles = analyze_draft_angles(result)
+        # Find overhangs
+        overhangs = find_overhangs(wp)
         
-        # Find overhangs (for 3D printing)
-        overhangs = find_overhangs(result)
+        # Estimate wall thickness (simplified)
+        min_wall = estimate_min_wall_thickness(wp, bounding_box)
         
         return {
             "volume_mm3": volume,
-            "surface_area_mm2": surface_area,
+            "surface_area_mm2": 0,  # TODO: calculate properly
             "bounding_box": bounding_box,
             "num_faces": len(faces),
             "num_edges": len(edges),
@@ -97,8 +71,9 @@ def analyze_geometry(step_path: str) -> dict:
         }
         
     except Exception as e:
+        import traceback
         return {
-            "error": str(e),
+            "error": f"{str(e)}\n{traceback.format_exc()}",
             "volume_mm3": 0,
             "surface_area_mm2": 0,
             "bounding_box": {"x": 0, "y": 0, "z": 0},
@@ -113,80 +88,67 @@ def analyze_geometry(step_path: str) -> dict:
         }
 
 
-def estimate_min_wall_thickness(result) -> float:
+def estimate_min_wall_thickness(wp, bounding_box) -> float:
     """
     Estimate minimum wall thickness.
-    
-    Simplified approach: measure distances between parallel faces.
-    Real implementation would use medial axis transform.
+    Simplified: uses smallest bounding box dimension as proxy.
+    Real implementation would use ray casting.
     """
-    # TODO: Implement proper wall thickness analysis
-    # For now, return a placeholder
-    return 2.0
+    return min(bounding_box["x"], bounding_box["y"], bounding_box["z"])
 
 
-def find_holes(result) -> list[dict]:
-    """
-    Find cylindrical holes in the geometry.
-    
-    Returns list of {"diameter": float, "depth": float}
-    """
+def find_holes(wp) -> list[dict]:
+    """Find cylindrical holes in the geometry."""
     holes = []
     
     try:
-        # Find cylindrical faces
-        cylindrical_faces = result.faces("%Cylinder").vals()
-        
-        for face in cylindrical_faces:
-            # Get cylinder properties
-            # This is simplified - real implementation needs more checks
-            surface = face.Surface()
-            if hasattr(surface, "Radius"):
-                diameter = surface.Radius() * 2
-                # Estimate depth from face bounds
+        for face in wp.faces().vals():
+            geom_type = face.geomType()
+            if geom_type == "CYLINDER":
+                # Get cylinder properties
                 bb = face.BoundingBox()
-                depth = max(bb.xlen, bb.ylen, bb.zlen)
-                holes.append({
-                    "diameter": diameter,
-                    "depth": depth
-                })
+                # Estimate diameter from face dimensions
+                dims = sorted([bb.xlen, bb.ylen, bb.zlen])
+                diameter = dims[0]  # Smallest dimension is likely the diameter
+                depth = dims[2]     # Largest is likely the depth
+                
+                if diameter < depth:  # Likely a hole, not a boss
+                    holes.append({
+                        "diameter": diameter,
+                        "depth": depth
+                    })
     except:
         pass
     
     return holes
 
 
-def find_fillets(result) -> list[dict]:
+def find_fillets(wp) -> list[dict]:
     """Find fillet faces and their radii."""
     fillets = []
     
     try:
-        # Find toroidal and cylindrical fillet faces
-        # This is a simplification
-        for face in result.faces().vals():
-            surface_type = face.geomType()
-            if surface_type in ["CYLINDER", "TORUS"]:
-                # Could be a fillet
-                if hasattr(face.Surface(), "Radius"):
-                    radius = face.Surface().Radius()
-                    if radius < 10:  # Likely a fillet, not a main feature
-                        fillets.append({"radius": radius})
+        for face in wp.faces().vals():
+            geom_type = face.geomType()
+            if geom_type in ["CYLINDER", "TORUS"]:
+                bb = face.BoundingBox()
+                # Small cylindrical/toroidal faces are likely fillets
+                min_dim = min(bb.xlen, bb.ylen, bb.zlen)
+                if min_dim < 5:  # Likely a fillet
+                    fillets.append({"radius": min_dim / 2})
     except:
         pass
     
     return fillets
 
 
-def count_sharp_edges(result) -> int:
-    """Count edges without fillets (sharp corners)."""
+def count_sharp_edges(wp) -> int:
+    """Count edges that are likely sharp (no fillet)."""
     sharp = 0
     
     try:
-        for edge in result.edges().vals():
-            # Check if edge is shared by two faces meeting at sharp angle
-            # Simplified: count non-fillet edges
-            edge_type = edge.geomType()
-            if edge_type == "LINE":
+        for edge in wp.edges().vals():
+            if edge.geomType() == "LINE":
                 sharp += 1
     except:
         pass
@@ -194,53 +156,44 @@ def count_sharp_edges(result) -> int:
     return sharp
 
 
-def analyze_draft_angles(result) -> list[float]:
-    """
-    Analyze draft angles on faces relative to Z axis (pull direction).
-    
-    Returns list of angles in degrees.
-    """
+def analyze_draft_angles(wp) -> list[float]:
+    """Analyze draft angles on faces relative to Z axis."""
     angles = []
     
     try:
-        for face in result.faces().vals():
-            # Get face normal
-            normal = face.normalAt()
-            
-            # Calculate angle from Z axis
-            z_component = abs(normal.z)
-            angle_from_z = math.degrees(math.acos(min(z_component, 1.0)))
-            
-            # Draft angle is complement of angle from vertical
-            if 85 < angle_from_z < 95:  # Near-vertical face
-                draft_angle = 90 - angle_from_z
-                angles.append(abs(draft_angle))
+        for face in wp.faces().vals():
+            if face.geomType() == "PLANE":
+                # Get face normal at center
+                center = face.Center()
+                normal = face.normalAt(center)
+                
+                # Calculate angle from Z axis
+                z_component = abs(normal.z)
+                if z_component < 0.99:  # Not horizontal
+                    angle_from_z = math.degrees(math.acos(min(z_component, 1.0)))
+                    # Near-vertical faces
+                    if 80 < angle_from_z < 100:
+                        draft_angle = abs(90 - angle_from_z)
+                        angles.append(draft_angle)
     except:
         pass
     
     return angles
 
 
-def find_overhangs(result, threshold_angle: float = 45) -> list[dict]:
-    """
-    Find overhanging faces for 3D printing analysis.
-    
-    Faces with normal pointing more than threshold_angle from vertical
-    and facing downward are overhangs.
-    """
+def find_overhangs(wp, threshold_angle: float = 45) -> list[dict]:
+    """Find overhanging faces for 3D printing analysis."""
     overhangs = []
     
     try:
-        for face in result.faces().vals():
-            normal = face.normalAt()
+        for face in wp.faces().vals():
+            center = face.Center()
+            normal = face.normalAt(center)
             
             # Check if face is pointing downward
-            if normal.z < 0:
-                # Calculate angle from vertical (Z axis)
+            if normal.z < -0.1:
                 angle = math.degrees(math.acos(abs(normal.z)))
-                
                 if angle > threshold_angle:
-                    # Get face area
                     area = face.Area()
                     overhangs.append({
                         "angle": angle,
